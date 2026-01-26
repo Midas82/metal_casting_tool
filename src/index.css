@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  background-color: #0f172a;
+  /* slate-900 */
+}
+
+/* Print Styles */
+@media print {
+  @page {
+    margin: 0;
+    size: auto;
+  }
+
+  body {
+    background-color: white !important;
+    print-color-adjust: exact;
+  }
+
+  /* Hide UI Elements */
+  .sidebar-container,
+  .grid-layer,
+  text,
+  circle,
+  /* Hide drag handles */
+  button {
+    display: none !important;
+  }
+
+  /* Ensure Shape is visible and styled for print */
+  .relative.w-full.h-full {
+    background-color: white !important;
+  }
+
+  svg {
+    background-color: white !important;
+  }
+
+  /* Shape specific overrides */
+  path {
+    fill: none !important;
+    stroke: black !important;
+    stroke-width: 2px !important;
+    stroke-opacity: 1 !important;
+    fill-opacity: 0 !important;
+  }
+
+  /* Show center marker merely as a crosshair if needed, or hide it */
+  /* Let's keep the center marker circle hidden as defined by 'circle' rule above. */
+}
