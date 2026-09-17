@@ -17,11 +17,6 @@ export const DEFAULT_MATERIAL = 'ZINC';
 
 export const getMaterial = (key) => MATERIALS[key] || MATERIALS[DEFAULT_MATERIAL];
 
-/** Densities in lbs per cubic inch, kept as a lookup for convenience. */
-export const MATERIAL_DENSITIES = Object.fromEntries(
-    Object.entries(MATERIALS).map(([key, m]) => [key, m.density])
-);
-
 /**
  * Linear factor the PATTERN must be scaled by so the casting cools to the
  * nominal dimensions the user typed. Returns exactly 1 when compensation is off.
@@ -72,11 +67,6 @@ export const calculatePolygonArea = (points) => {
 export const SHAPE_FORMULAS = {
     DISK: (diameter) => Math.PI * Math.pow(diameter / 2, 2),
     BLOCK: (width, length) => width * length,
-    FLANGE: (diameter, holeDia) => {
-        const mainArea = Math.PI * Math.pow(diameter / 2, 2);
-        const holeArea = Math.PI * Math.pow(holeDia / 2, 2);
-        return Math.max(0, mainArea - holeArea);
-    },
 };
 
 /**

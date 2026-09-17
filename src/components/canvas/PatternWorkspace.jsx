@@ -4,20 +4,34 @@ import ShapeRenderer from './ShapeRenderer';
 import PrintSheet from './PrintSheet';
 import Sidebar from '../../layout/Sidebar';
 import usePatternGeometry from '../../hooks/usePatternGeometry';
-import { pixelsToInches } from '../../utils/unitConversion';
 import { computeFitView } from '../../logic/viewFit';
+import { dragToGeometryPatch } from '../../logic/dragMath';
 import { sanitizeGeometry, sanitizeHeight, DEFAULT_GEOMETRY, DEFAULT_HEIGHT } from '../../logic/constraints';
 import { shrinkageFactor, DEFAULT_MATERIAL, MATERIALS } from '../../utils/castingFormulas';
 import { loadJSON, saveJSON, STORAGE_KEYS } from '../../utils/storage';
 
+// Read once up front so the initial-view fit and the persisted-state
+// initializers below don't each hit storage separately for the same keys.
+const loadInitialState = () => {
+    const geometry = sanitizeGeometry(loadJSON(STORAGE_KEYS.geometry, DEFAULT_GEOMETRY));
+    const height = sanitizeHeight(loadJSON(STORAGE_KEYS.height, DEFAULT_HEIGHT));
+    const shrinkage = loadJSON(STORAGE_KEYS.shrinkage, false) === true;
+    const savedMaterial = loadJSON(STORAGE_KEYS.material, DEFAULT_MATERIAL);
+    const material = MATERIALS[savedMaterial] ? savedMaterial : DEFAULT_MATERIAL;
+    return { geometry, height, shrinkage, material };
+};
+
 const PatternWorkspace = () => {
     const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
     // Seeded from a fit so the pattern is framed on first paint rather than
-    // being clipped at true 1:1 scale.
+    // being clipped at true 1:1 scale. Uses the persisted material/shrinkage
+    // so a reload with the shrink allowance on doesn't open at a zoom
+    // computed for the unshrunk size.
+    const [initial] = useState(loadInitialState);
     const [initialView] = useState(() =>
         computeFitView(
-            sanitizeGeometry(loadJSON(STORAGE_KEYS.geometry, DEFAULT_GEOMETRY)),
-            1,
+            initial.geometry,
+            shrinkageFactor(initial.material, initial.shrinkage),
             { width: window.innerWidth, height: window.innerHeight }
         )
     );
@@ -32,17 +46,10 @@ const PatternWorkspace = () => {
 
     // -- Persisted state (every load sanitised, so old or corrupt saves
     //    can never inject an impossible pattern) --
-    const [geometry, setGeometry] = useState(() =>
-        sanitizeGeometry(loadJSON(STORAGE_KEYS.geometry, DEFAULT_GEOMETRY))
-    );
-    const [height, setHeightRaw] = useState(() =>
-        sanitizeHeight(loadJSON(STORAGE_KEYS.height, DEFAULT_HEIGHT))
-    );
-    const [shrinkage, setShrinkage] = useState(() => loadJSON(STORAGE_KEYS.shrinkage, false) === true);
-    const [material, setMaterial] = useState(() => {
-        const saved = loadJSON(STORAGE_KEYS.material, DEFAULT_MATERIAL);
-        return MATERIALS[saved] ? saved : DEFAULT_MATERIAL;
-    });
+    const [geometry, setGeometry] = useState(initial.geometry);
+    const [height, setHeightRaw] = useState(initial.height);
+    const [shrinkage, setShrinkage] = useState(initial.shrinkage);
+    const [material, setMaterial] = useState(initial.material);
     const [showTaper, setShowTaper] = useState(false);
 
     // Single funnel for every geometry mutation.
@@ -104,23 +111,14 @@ const PatternWorkspace = () => {
         const originX = (rect?.left ?? 0) + dimensions.width / 2 + pan.x;
         const originY = (rect?.top ?? 0) + dimensions.height / 2 + pan.y;
 
-        // Screen delta -> canvas pixels -> inches -> undo the shrink scale,
-        // so the handle tracks the cursor whatever the view is doing.
-        const dx = (e.clientX - originX) / zoom;
-        const dy = (e.clientY - originY) / zoom;
-
-        const toInches = (px) => pixelsToInches(px) / shrinkFactor;
-
-        if (activeDragHandle === 'corner') {
-            const w = Math.abs(toInches(dx)) * 2;
-            const l = Math.abs(toInches(dy)) * 2;
-            updateGeometry((prev) => ({ ...prev, width: w, length: l }));
-            return;
-        }
-
-        const radiusInches = toInches(Math.sqrt(dx * dx + dy * dy));
-        const key = activeDragHandle === 'outer' ? 'outerRadius' : 'innerRadius';
-        updateGeometry((prev) => ({ ...prev, [key]: radiusInches }));
+        const patch = dragToGeometryPatch({
+            type: activeDragHandle,
+            dx: e.clientX - originX,
+            dy: e.clientY - originY,
+            zoom,
+            shrinkFactor,
+        });
+        updateGeometry((prev) => ({ ...prev, ...patch }));
     };
 
     const handlePointerUp = () => {
