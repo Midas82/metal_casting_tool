@@ -1,124 +1,137 @@
 /**
- * Utility for handling Imperial measurements (Feet, Inches, Fractions)
- * and converting them to decimal inches or rendering pixels.
+ * Imperial measurement layer.
+ *
+ * CANONICAL RULE: all geometry state is stored in DECIMAL INCHES.
+ * Pixels exist only at render time, and PIXELS_PER_INCH below is the ONLY
+ * place inches become pixels. Nothing else may invent a scale factor.
  */
 
-const PPI = 96; // Standard web PPI for more accurate DPI translation if needed
-// However, for industrial tools, the user cares about relative scale.
-// We'll use 96 as a baseline for "Screen Pixels per Inch".
+/** The single source of truth for screen scale. */
+export const PIXELS_PER_INCH = 96;
+
+/** Smallest fraction a foundry pattern is dimensioned to. */
+export const FRACTION_DENOMINATOR = 64;
+
+/** Matches 6, 6.5 or .5 */
+const NUM = String.raw`(?:\d+(?:\.\d+)?|\.\d+)`;
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
 
 /**
- * Parses a string input into decimal inches.
- * Supports patterns like: 2', 6", 2' 6", 1/4, 6 1/2, 2' 6 3/4"
+ * Parses an imperial string into decimal inches.
+ *
+ * Accepts: 6 | 6.5 | .5 | 1/4 | 6 1/2 | 2' | 2' 6" | 2' 6 3/4" | 6 in | 2 ft
+ * A bare number is read as inches.
+ *
+ * @returns {number|null} decimal inches, or null if the input is not a
+ *   measurement. Callers MUST treat null as "reject and keep the old value" —
+ *   silently coercing junk to 0 is how a bad dimension reaches the shop floor.
  */
 export const parseImperial = (input) => {
-    if (typeof input === 'number') return input;
-    if (!input || typeof input !== 'string') return 0;
+    if (typeof input === 'number') return Number.isFinite(input) ? input : null;
+    if (typeof input !== 'string') return null;
 
-    let totalInches = 0;
+    let s = input.trim().toLowerCase();
+    if (!s) return null;
 
-    // 1. Extract feet (e.g., 2')
-    const feetMatch = input.match(/(\d+)'/);
-    if (feetMatch) {
-        totalInches += parseInt(feetMatch[1]) * 12;
+    let sign = 1;
+    if (s.startsWith('-')) {
+        sign = -1;
+        s = s.slice(1).trim();
     }
 
-    // 2. Extract remaining parts (inches and fractions)
-    // Remove feet part for easier parsing
-    const inchesPart = input.replace(/(\d+)'/, '').trim();
+    // Normalise spelled-out units to their marks (longest alternatives first).
+    s = s.replace(/feet|foot|ft\.?/g, "'").replace(/inches|inch|in\.?/g, '"');
 
-    // Handle fractions like "1/2" or "6 1/2"
-    // This regex looks for: 
-    // - [Whole Number]?[space]?([Numerator]/[Denominator])
-    // - OR just a whole number
-    const regex = /(\d+)?\s?(\d+)\/(\d+)|(\d+)/g;
-    let match;
-    let hasFoundInches = false;
+    let total = 0;
+    let matched = false;
 
-    while ((match = regex.exec(inchesPart)) !== null) {
-        if (match[2] && match[3]) { // Fraction part
-            const whole = match[1] ? parseInt(match[1]) : 0;
-            const fraction = parseInt(match[2]) / parseInt(match[3]);
-            totalInches += (whole + fraction);
-            hasFoundInches = true;
-        } else if (match[4]) { // Whole number part (if not part of a fraction)
-            // Check if it's followed by a fraction (to avoid double counting)
-            const lookahead = inchesPart.slice(match.index + match[4].length).trim();
-            if (!lookahead.startsWith('/')) {
-                totalInches += parseInt(match[4]);
-                hasFoundInches = true;
-            }
+    // Feet component, e.g. 2'
+    const feet = s.match(new RegExp(`(${NUM})\\s*'`));
+    if (feet) {
+        total += parseFloat(feet[1]) * 12;
+        matched = true;
+        s = s.replace(feet[0], ' ');
+    }
+
+    // Whatever is left is the inches component.
+    const rest = s.replace(/"/g, ' ').trim();
+    if (rest) {
+        const mixed = rest.match(new RegExp(`^(${NUM})\\s+(\\d+)\\s*/\\s*(\\d+)$`));
+        const fraction = rest.match(/^(\d+)\s*\/\s*(\d+)$/);
+        const plain = rest.match(new RegExp(`^(${NUM})$`));
+
+        if (mixed) {
+            const den = parseInt(mixed[3], 10);
+            if (den === 0) return null;
+            total += parseFloat(mixed[1]) + parseInt(mixed[2], 10) / den;
+            matched = true;
+        } else if (fraction) {
+            const den = parseInt(fraction[2], 10);
+            if (den === 0) return null;
+            total += parseInt(fraction[1], 10) / den;
+            matched = true;
+        } else if (plain) {
+            total += parseFloat(plain[1]);
+            matched = true;
+        } else {
+            // Unrecognised trailing text - reject rather than guess.
+            return null;
         }
     }
 
-    return totalInches;
+    return matched ? sign * total : null;
 };
 
 /**
- * Formats decimal inches into a readable string (e.g., 2' 6 1/4")
- * Precision is limited to 1/64th for practical foundry use.
+ * Formats decimal inches as a foundry-readable string, e.g. 2' 6 1/4".
+ * Rounds ONCE to the nearest 1/64 so the result is stable under re-formatting.
  */
-export const formatImperial = (decimalInches) => {
-    if (decimalInches === 0) return '0"';
+export const formatImperial = (decimalInches, denominator = FRACTION_DENOMINATOR) => {
+    if (!Number.isFinite(decimalInches)) return '0"';
 
-    const feet = Math.floor(decimalInches / 12);
-    const inches = decimalInches % 12;
-    const wholeInches = Math.floor(inches);
-    const remainder = inches - wholeInches;
+    const sign = decimalInches < 0 ? '-' : '';
+    const ticks = Math.round(Math.abs(decimalInches) * denominator);
+    if (ticks === 0) return '0"';
 
-    // Calculate nearest 64th
-    const sixtyFourths = Math.round(remainder * 64);
+    const totalInches = Math.floor(ticks / denominator);
+    const feet = Math.floor(totalInches / 12);
+    const wholeInches = totalInches % 12;
 
-    let fractionStr = '';
-    if (sixtyFourths > 0) {
-        // Simplify the fraction (e.g., 32/64 -> 1/2)
-        const gcd = (a, b) => b ? gcd(b, a % b) : a;
-        const common = gcd(sixtyFourths, 64);
-        const num = sixtyFourths / common;
-        const den = 64 / common;
-
-        // If rounded to 64/64, adjust inches
-        if (num === den) {
-            return formatImperial(decimalInches + (1 / 64)); // Recursive fix for rounding up
-        }
-
-        fractionStr = `${num}/${den}`;
+    let num = ticks % denominator;
+    let den = denominator;
+    if (num > 0) {
+        const common = gcd(num, den);
+        num /= common;
+        den /= common;
     }
 
-    let result = '';
-    if (feet > 0) result += `${feet}' `;
-    if (wholeInches > 0 || fractionStr) {
-        result += `${wholeInches}`;
-        if (fractionStr) result += ` ${fractionStr}`;
-        result += '"';
+    const parts = [];
+    if (feet > 0) parts.push(`${feet}'`);
+
+    if (wholeInches > 0 || num > 0 || feet === 0) {
+        let inchStr = '';
+        if (wholeInches > 0 || num === 0) inchStr += `${wholeInches}`;
+        if (num > 0) inchStr += `${inchStr ? ' ' : ''}${num}/${den}`;
+        parts.push(`${inchStr}"`);
     }
 
-    return result.trim() || '0"';
+    return sign + parts.join(' ');
 };
 
-/**
- * Converts inches to pixels for rendering
- */
-export const inchesToPixels = (inches) => inches * PPI;
+/** Inches -> screen pixels. The only conversion in the codebase. */
+export const inchesToPixels = (inches) => inches * PIXELS_PER_INCH;
 
-/**
- * Converts pixels to inches for calculation
- */
-export const pixelsToInches = (pixels) => pixels / PPI;
+/** Screen pixels -> inches. */
+export const pixelsToInches = (pixels) => pixels / PIXELS_PER_INCH;
 
-/**
- * Enforces industrial constraints
- */
-export const validateConstraints = (type, value, context = {}) => {
-    switch (type) {
-        case 'DIAMETER':
-            return Math.min(12, Math.max(0.5, value)); // 0.5" to 12"
-        case 'HEIGHT':
-            return Math.min(36, Math.max(0.125, value)); // 1/8" to 3'
-        case 'HOLE':
-            const maxHole = (context.outerDiameter || 1) - 0.25; // 1/4" margin
-            return Math.min(maxHole, Math.max(0, value));
-        default:
-            return value;
-    }
+/** Clamps a value into [min, max], rejecting non-numbers via fallback. */
+export const clamp = (value, min, max, fallback = min) => {
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
 };
+
+/** Rounds to the nearest 1/64" so stored geometry stays on a real fraction. */
+export const snapToFraction = (inches, denominator = FRACTION_DENOMINATOR) =>
+    Math.round(inches * denominator) / denominator;
