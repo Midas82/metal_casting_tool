@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "verify": "npm run lint && npm run test && npm run build"
+    "verify": "npm run lint && npm run test && npm run build",
+    "verify:print": "node scripts/verify-print.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.563.0",

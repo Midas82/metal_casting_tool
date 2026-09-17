@@ -136,7 +136,7 @@ const PatternWorkspace = () => {
     const cursor = isPanning ? 'grabbing' : activeDragHandle ? 'crosshair' : 'default';
 
     return (
-        <div className="relative w-full h-full overflow-hidden bg-slate-900 select-none">
+        <div className="app-shell relative w-full h-full overflow-hidden bg-slate-900 select-none">
             <Sidebar
                 geometryValues={geometry}
                 onGeometryChange={updateGeometry}

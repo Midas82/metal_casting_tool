@@ -21,6 +21,7 @@ npm run verify    # lint + tests + build (what CI runs)
 | `npm run test` | Vitest, single run |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run verify` | lint + test + build |
+| `npm run verify:print` | print gate — drives a real browser, asserts 1:1 and pagination |
 
 ## The unit rule
 
@@ -70,11 +71,46 @@ inches (`width="5.0000in"`); printing uses a dedicated hidden sheet rather than
 the live canvas, so zoom and pan cannot scale the result. Print at 100% — never
 "fit to page".
 
+### Tiled printing
+
+A browser will not split an SVG across pages, and the tool's largest pattern
+(12") needs a 13" sheet, which cannot fit Letter. An oversized pattern is
+therefore emitted as one page-sized SVG **per tile**, each breaking to its own
+page, with a 0.5" glue tab shared by neighbours:
+
+| Pattern | Sheet | Pages |
+| --- | --- | --- |
+| 4"×6" block | 5"×7" | 1 — no assembly |
+| 12" disk | 13"×13" | 4 (`A1`,`A2`,`B1`,`B2`) |
+
+Each tile carries corner registration crosses, dashed lines showing where the
+neighbouring sheet overlaps, and a label (`A1 · sheet 1/4 · 2x2 grid · 1:1`).
+Trim to the dashed line, align on the crosses, tape.
+
+The grid maths lives in `src/logic/tiling.js` and is ported from a sibling
+tool's production algorithm; its tests pin that tool's ground truth
+(96"×144" @ 1" overlap → 13×15 = 195 tiles, `A1`..`O13`) so the two stay
+interchangeable.
+
+### Verifying print output
+
+`npm run verify:print` builds nothing — serve the app first, then point it at
+the server:
+
+```bash
+npm run build && npm run preview -- --port 4173 &
+node scripts/verify-print.mjs http://localhost:4173
+```
+
+It drives a real browser in print media, generates PDFs, and asserts page
+counts and that no ancestor clips the sheet. It exits 2 (not 1) when Playwright
+is unavailable, so a missing browser can never be mistaken for a pass.
+
 ## Project layout
 
 ```
 src/
-  logic/          geometry, constraints, 1:1 render, view framing  (pure, tested)
+  logic/          geometry, constraints, 1:1 render, view framing, tiling (pure, tested)
   utils/          units, casting maths, storage, export            (pure, tested)
   hooks/          usePatternGeometry — derives canvas data
   components/     canvas/ (workspace, renderer, grid, print sheet)
@@ -100,5 +136,7 @@ project page or a custom domain without reconfiguration.
   Real draft (`inset = height × tan θ`) is not implemented.
 - Volume assumes vertical walls, so it does not account for draft taper.
 - One centre hole per pattern; no bolt circles.
+- Tile labels use a single letter per row, so a pattern needing more than 26
+  rows of sheets would repeat labels. Unreachable at the current 12" maximum.
 - No DXF export, fillets, core prints, machining allowance, or gating/riser
   calculations.

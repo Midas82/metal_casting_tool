@@ -38,12 +38,20 @@ body,
     size: auto;
   }
 
+  /* The whole ancestor chain must stop constraining the sheet. Resetting only
+     html/body/#root is not enough: the React wrappers below #root carry
+     h-screen / h-full / overflow-hidden, so a 1:1 sheet taller than the
+     viewport was clipped instead of flowing onto a second page. */
   html,
   body,
-  #root {
-    height: auto;
-    overflow: visible;
+  #root,
+  .app-shell {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
     background: #fff !important;
+    position: static !important;
   }
 
   /* Hide the whole application shell. */
@@ -58,8 +66,23 @@ body,
     background: #fff;
   }
 
+  /* One tile per page. A single oversized SVG cannot paginate, so each tile
+     is its own page-sized block and breaks after itself. */
+  .print-tile {
+    break-after: page;
+    page-break-after: always; /* legacy alias for older print engines */
+    display: block;
+    overflow: visible;
+  }
+
+  .print-tile:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
   .print-sheet svg {
     /* Must not be scaled by any stylesheet - 1:1 is the point. */
+    display: block;
     max-width: none;
     max-height: none;
   }
