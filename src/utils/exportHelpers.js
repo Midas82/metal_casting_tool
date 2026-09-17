@@ -1,40 +1,42 @@
-import { inchesToPixels } from './unitConversion';
-import { pointsToSVGPath, addHoleToPath } from '../logic/geometry';
+import { buildPatternRender, patternToSVGDocument } from '../logic/patternRender';
+import { formatImperial } from './unitConversion';
+import { describeShrinkage, getMaterial } from './castingFormulas';
 
 /**
- * Generates and downloads a clean SVG file of the pattern
+ * Generates and downloads a 1:1 SVG of the PATTERN.
+ *
+ * When shrinkage compensation is on, the exported geometry is enlarged by the
+ * alloy's shrink rule - the export is the thing that gets manufactured, so the
+ * allowance has to be in the file, not just on the screen.
  */
-export const downloadSVG = (points, geometry, filename = 'pattern_export_midas.svg') => {
-    const { holeDiameter = 0, outerRadius = 6, width = 4, length = 6, shapeType = 'STAR' } = geometry;
+export const downloadSVG = (points, geometry, options = {}) => {
+    const {
+        filename = 'pattern_export.svg',
+        shrinkFactor = 1,
+        material = 'ZINC',
+        shrinkageEnabled = false,
+        height = 0,
+        projectName = 'Untitled Pattern',
+    } = options;
 
-    // 1. Calculate Bounds in INCHES
-    let bounds = { minX: -outerRadius, maxX: outerRadius, minY: -outerRadius, maxY: outerRadius };
-    if (shapeType === 'BLOCK') {
-        bounds = { minX: -width / 2, maxX: width / 2, minY: -length / 2, maxY: length / 2 };
-    }
+    const render = buildPatternRender(points, geometry, { shrinkFactor });
 
-    // Convert bounds to pixels for viewBox
-    const margin = 0.5; // 0.5" margin
-    const viewBoxX = inchesToPixels(bounds.minX - margin);
-    const viewBoxY = inchesToPixels(bounds.minY - margin);
-    const viewBoxW = inchesToPixels(bounds.maxX - bounds.minX + margin * 2);
-    const viewBoxH = inchesToPixels(bounds.maxY - bounds.minY + margin * 2);
+    const allowance = shrinkageEnabled
+        ? `shrink allowance applied: ${describeShrinkage(material)} (x${shrinkFactor.toFixed(5)})`
+        : 'NO shrink allowance - nominal casting size';
 
-    // 2. Generate Path
-    // Scale points to pixels
-    const renderPoints = points.map(p => ({ x: inchesToPixels(p.x), y: inchesToPixels(p.y) }));
-    let pathData = pointsToSVGPath(renderPoints);
-    if (holeDiameter > 0) {
-        pathData = addHoleToPath(pathData, inchesToPixels(holeDiameter / 2));
-    }
+    const description = [
+        `Project: ${projectName}`,
+        `Shape: ${geometry.shapeType}`,
+        `Material: ${getMaterial(material).label}`,
+        `Pattern height: ${formatImperial(height)}`,
+        `Extents: ${formatImperial(render.extentsIn.width)} x ${formatImperial(render.extentsIn.height)}`,
+        allowance,
+        'Scale 1:1 - do not resize when printing or importing.',
+        `Generated ${new Date().toISOString().slice(0, 10)} by Midas Digital Pattern Suite`,
+    ].join(' | ');
 
-    const svgContent = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}" width="${viewBoxW / 96}in" height="${viewBoxH / 96}in">
-    <title>${filename}</title>
-    <desc>Imperial Foundary Pattern - Midas Digital</desc>
-    <path d="${pathData}" fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" />
-</svg>
-    `.trim();
+    const svgContent = patternToSVGDocument(render, { title: projectName, description });
 
     const blob = new Blob([svgContent], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);

@@ -13,46 +13,60 @@ body,
   /* slate-900 */
 }
 
-/* Print Styles */
+/* Visually hidden but available to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Print: the screen canvas never prints. Only .print-sheet does, and it is
+   sized in real inches so output is a true 1:1 template. */
+.print-sheet {
+  display: none;
+}
+
 @media print {
   @page {
-    margin: 0;
+    margin: 0.25in;
     size: auto;
   }
 
-  body {
-    background-color: white !important;
-    print-color-adjust: exact;
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+    background: #fff !important;
   }
 
-  /* Hide UI Elements */
-  .sidebar-container,
-  .grid-layer,
-  text,
-  circle,
-  /* Hide drag handles */
-  button {
+  /* Hide the whole application shell. */
+  .app-canvas,
+  .app-chrome,
+  .sidebar-container {
     display: none !important;
   }
 
-  /* Ensure Shape is visible and styled for print */
-  .relative.w-full.h-full {
-    background-color: white !important;
+  .print-sheet {
+    display: block;
+    background: #fff;
   }
 
-  svg {
-    background-color: white !important;
+  .print-sheet svg {
+    /* Must not be scaled by any stylesheet - 1:1 is the point. */
+    max-width: none;
+    max-height: none;
   }
 
-  /* Shape specific overrides */
-  path {
+  .print-sheet path {
+    stroke: #000 !important;
     fill: none !important;
-    stroke: black !important;
-    stroke-width: 2px !important;
-    stroke-opacity: 1 !important;
-    fill-opacity: 0 !important;
+    stroke-width: 1px !important;
   }
-
-  /* Show center marker merely as a crosshair if needed, or hide it */
-  /* Let's keep the center marker circle hidden as defined by 'circle' rule above. */
 }
