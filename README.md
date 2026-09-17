@@ -1,7 +1,8 @@
 # Midas Digital — Pattern Suite
 
 A browser tool for laying out foundry casting patterns in imperial units, with
-live volume/weight figures and 1:1 output for the shop floor.
+live volume, weight, modulus and riser figures, and true 1:1 output for the
+shop floor.
 
 Stack: React 19 + Vite + Tailwind, deployed to GitHub Pages.
 
@@ -64,6 +65,33 @@ and the print sheet consume — so what you see, what you print, and what you
 cut cannot drift apart. Volume and weight in the Foundry Data panel describe
 the finished casting at nominal size; the pattern volume is reported separately.
 
+## Foundry calculations
+
+Dimensions you enter describe the finished casting. From the outline, the
+height and the alloy the tool derives:
+
+| Figure | How |
+| --- | --- |
+| Net area | shoelace for a star, exact formula for disk/block, hole subtracted |
+| Volume | net area × height (prismatic) |
+| **Surface area** | 2 × net area + perimeter × height + π × holeØ × height |
+| **Modulus** *M* | V / A — governs solidification time via Chvorinov's rule, t = B·M² |
+| **Riser Ø** | sized so the riser freezes *after* the casting: M(riser) = 1.2 × M(casting) |
+| **Pour weight** | (casting + riser) × density — the metal you actually melt |
+| **Yield** | casting ÷ pour, the number a foundry buys metal by |
+
+**Riser convention.** A cylindrical riser with H = Ø sitting *on* the casting
+has its base insulated by the joint, so only one flat end cools and
+**Ø = 5·M**. A free-standing cylinder cools from both ends and Ø = 6·M. Getting
+this wrong by one end oversizes the diameter by 20% and the riser volume by
+~73%, so `sizeCylindricalRiser()` takes `baseContactsCasting` explicitly rather
+than baking in an assumption. Both are covered by a round-trip test that solves
+the sized riser back to its target modulus.
+
+**Caveat carried in the UI:** surface area assumes vertical walls. Real draft
+taper would enlarge one face and slant the wall, so the current modulus is a
+slight overestimate — which errs towards a larger riser, the safe direction.
+
 ## Output
 
 Both the SVG export and printing are **true 1:1**. The SVG is sized in real
@@ -110,7 +138,8 @@ is unavailable, so a missing browser can never be mistaken for a pass.
 
 ```
 src/
-  logic/          geometry, constraints, 1:1 render, view framing, tiling (pure, tested)
+  logic/          geometry, constraints, 1:1 render, view framing,
+                  tiling, drag maths, solidification          (pure, tested)
   utils/          units, casting maths, storage, export            (pure, tested)
   hooks/          usePatternGeometry — derives canvas data
   components/     canvas/ (workspace, renderer, grid, print sheet)
@@ -145,5 +174,8 @@ nothing is a green check for an unrun claim.
 - One centre hole per pattern; no bolt circles.
 - Tile labels use a single letter per row, so a pattern needing more than 26
   rows of sheets would repeat labels. Unreachable at the current 12" maximum.
-- No DXF export, fillets, core prints, machining allowance, or gating/riser
-  calculations.
+- Riser sizing covers a single cylindrical riser by the modulus method. No
+  gating system (sprue, runner, ingate), no multi-riser feeding, no allowance
+  for riser sleeves or exothermic tops.
+- No DXF export, fillets, core prints, or machining allowance.
+- No mould/flask sizing or sand-volume estimate.

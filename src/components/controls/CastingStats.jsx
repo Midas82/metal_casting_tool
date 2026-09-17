@@ -5,6 +5,7 @@ import {
     describeShrinkage,
     MATERIALS,
 } from '../../utils/castingFormulas';
+import { analyseCasting, RISER_MODULUS_RATIO } from '../../logic/solidification';
 import { formatImperial } from '../../utils/unitConversion';
 
 /**
@@ -20,6 +21,13 @@ const CastingStats = ({ points, height, geometry, shrinkage, material, setMateri
 
     const stats = useMemo(
         () => calculateCastingStats(calculateNetArea(points, geometry), height, material),
+        [points, geometry, height, material]
+    );
+
+    // Surface area drives the modulus, the modulus sizes the riser, and the
+    // riser is what turns casting weight into the melt you actually buy.
+    const feed = useMemo(
+        () => analyseCasting(points, geometry, height, material),
         [points, geometry, height, material]
     );
 
@@ -66,6 +74,10 @@ const CastingStats = ({ points, height, geometry, shrinkage, material, setMateri
                     <dd className="font-mono">{stats.area} in²</dd>
                 </div>
                 <div className="flex justify-between">
+                    <dt>Surface area</dt>
+                    <dd className="font-mono">{feed.surface.total.toFixed(2)} in²</dd>
+                </div>
+                <div className="flex justify-between">
                     <dt>Height</dt>
                     <dd className="font-mono">{formatImperial(height)}</dd>
                 </div>
@@ -76,6 +88,51 @@ const CastingStats = ({ points, height, geometry, shrinkage, material, setMateri
                     </div>
                 )}
             </dl>
+
+            {/* Feeding: Chvorinov's rule. A riser only feeds if it freezes
+                after the casting, so its modulus must exceed the casting's. */}
+            {feed.modulus > 0 && (
+                <div className="mb-3 pt-2" style={{ borderTop: '1px solid #1e293b' }}>
+                    <div className="flex justify-between items-baseline mb-1.5">
+                        <span className="text-[10px] uppercase tracking-wider" style={{ color: '#f59e0b' }}>
+                            Feeding
+                        </span>
+                        <span className="text-[9px]" style={{ color: '#475569' }}>
+                            riser {RISER_MODULUS_RATIO.default}× modulus
+                        </span>
+                    </div>
+
+                    <dl className="text-[10px] space-y-1" style={{ color: '#94a3b8' }}>
+                        <div className="flex justify-between">
+                            <dt>Modulus V/A</dt>
+                            <dd className="font-mono">{feed.modulus.toFixed(3)} in</dd>
+                        </div>
+                        <div className="flex justify-between">
+                            <dt>Riser Ø × H</dt>
+                            <dd className="font-mono">
+                                {formatImperial(feed.riser.diameter)} × {formatImperial(feed.riser.height)}
+                            </dd>
+                        </div>
+                        <div className="flex justify-between">
+                            <dt>Pour weight</dt>
+                            <dd className="font-mono" style={{ color: '#fbbf24' }}>
+                                {feed.pourWeight.toFixed(2)} lbs
+                            </dd>
+                        </div>
+                        <div className="flex justify-between">
+                            <dt>Yield</dt>
+                            <dd className="font-mono" style={{ color: feed.yieldPercent < 60 ? '#f87171' : '#6ee7b7' }}>
+                                {feed.yieldPercent.toFixed(0)}%
+                            </dd>
+                        </div>
+                    </dl>
+
+                    <p className="text-[9px] mt-1.5 leading-snug" style={{ color: '#475569' }}>
+                        Cylindrical riser, H = Ø, base on the casting. Vertical walls assumed —
+                        draft taper is not yet modelled.
+                    </p>
+                </div>
+            )}
 
             <div
                 className={`text-[10px] px-2 py-1.5 rounded border leading-snug ${
