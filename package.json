@@ -1,6 +1,5 @@
 {
   "name": "metal_casting_tool",
-  "homepage": "https://midas82.github.io",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview",
+    "verify": "npm run lint && npm run test && npm run build"
   },
   "dependencies": {
     "lucide-react": "^0.563.0",
