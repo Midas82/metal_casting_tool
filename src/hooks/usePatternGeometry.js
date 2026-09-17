@@ -3,32 +3,30 @@ import {
     generateStarPoints,
     generateCirclePoints,
     generateBlockPoints,
+    generateHandles,
     pointsToSVGPath,
-    addHoleToPath
+    addHoleToPath,
 } from '../logic/geometry';
 import { inchesToPixels } from '../utils/unitConversion';
 
+/**
+ * Derives everything the canvas needs from a sanitised geometry object.
+ *
+ * The centre hole is applied HERE and nowhere else - it used to be appended
+ * again downstream at inch scale into a pixel-scale path, which left a filled
+ * speck in the middle of every hole.
+ */
 export default function usePatternGeometry(geometry) {
-    const {
-        shapeType = 'STAR',
-        numPoints,
-        outerRadius,
-        innerRadius,
-        holeDiameter,
-        width,
-        length
-    } = geometry;
+    const { shapeType, numPoints, outerRadius, innerRadius, holeDiameter, width, length } = geometry;
 
     return useMemo(() => {
-        let pointsInches = [];
-
-        // 1. Generate Points in INCHES
+        let pointsInches;
         switch (shapeType) {
             case 'DISK':
                 pointsInches = generateCirclePoints(outerRadius);
                 break;
             case 'BLOCK':
-                pointsInches = generateBlockPoints(width || 4, length || 4);
+                pointsInches = generateBlockPoints(width, length);
                 break;
             case 'STAR':
             default:
@@ -36,20 +34,29 @@ export default function usePatternGeometry(geometry) {
                 break;
         }
 
-        // 2. Generate SVG Path (Scaled to Pixels for rendering)
-        const scale = (p) => ({ x: inchesToPixels(p.x), y: inchesToPixels(p.y) });
-        const pointsPixels = pointsInches.map(scale);
-        let path = pointsToSVGPath(pointsPixels);
+        const pointsPixels = pointsInches.map((p) => ({
+            x: inchesToPixels(p.x),
+            y: inchesToPixels(p.y),
+        }));
 
-        // Add Hole if applicable
+        let path = pointsToSVGPath(pointsPixels);
         if (holeDiameter > 0) {
             path = addHoleToPath(path, inchesToPixels(holeDiameter / 2));
         }
 
+        // Handles are shape-aware and stay in pixel space for rendering.
+        const handles = generateHandles(geometry, pointsInches).map((h) => ({
+            ...h,
+            x: inchesToPixels(h.x),
+            y: inchesToPixels(h.y),
+        }));
+
         return {
-            points: pointsInches, // For Area Calc
-            renderPoints: pointsPixels, // For Handles
-            path
+            points: pointsInches,   // inches - area, stats and export
+            renderPoints: pointsPixels,
+            handles,
+            path,
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [shapeType, numPoints, outerRadius, innerRadius, holeDiameter, width, length]);
 }

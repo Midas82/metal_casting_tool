@@ -1,217 +1,220 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import GridBackground from './GridBackground';
 import ShapeRenderer from './ShapeRenderer';
+import PrintSheet from './PrintSheet';
 import Sidebar from '../../layout/Sidebar';
 import usePatternGeometry from '../../hooks/usePatternGeometry';
-import { pixelsToInches, validateConstraints } from '../../utils/unitConversion';
+import { pixelsToInches } from '../../utils/unitConversion';
+import { computeFitView } from '../../logic/viewFit';
+import { sanitizeGeometry, sanitizeHeight, DEFAULT_GEOMETRY, DEFAULT_HEIGHT } from '../../logic/constraints';
+import { shrinkageFactor, DEFAULT_MATERIAL, MATERIALS } from '../../utils/castingFormulas';
+import { loadJSON, saveJSON, STORAGE_KEYS } from '../../utils/storage';
 
 const PatternWorkspace = () => {
     const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
-    const [pan, setPan] = useState({ x: 0, y: 0 });
-    const [zoom, setZoom] = useState(1);
+    // Seeded from a fit so the pattern is framed on first paint rather than
+    // being clipped at true 1:1 scale.
+    const [initialView] = useState(() =>
+        computeFitView(
+            sanitizeGeometry(loadJSON(STORAGE_KEYS.geometry, DEFAULT_GEOMETRY)),
+            1,
+            { width: window.innerWidth, height: window.innerHeight }
+        )
+    );
+    const [pan, setPan] = useState(initialView.pan);
+    const [zoom, setZoom] = useState(initialView.zoom);
     const [isPanning, setIsPanning] = useState(false);
-
-    // 'outer' | 'inner' | null
     const [activeDragHandle, setActiveDragHandle] = useState(null);
 
-    const lastMousePos = useRef({ x: 0, y: 0 });
+    const lastPointerPos = useRef({ x: 0, y: 0 });
+    const svgRef = useRef(null);
 
-    // -- State Initialization with Local Storage --
 
-    // Geometry State
-    const [geometry, setGeometry] = useState(() => {
-        const saved = localStorage.getItem('midas_pattern_geometry');
-        const defaultGeo = {
-            shapeType: 'STAR',
-            numPoints: 5,
-            outerRadius: 6.0, // 6 inches
-            innerRadius: 3.5, // 3.5 inches
-            holeDiameter: 0,
-            width: 4.0,
-            length: 6.0
-        };
-        return saved ? { ...defaultGeo, ...JSON.parse(saved) } : defaultGeo;
+    // -- Persisted state (every load sanitised, so old or corrupt saves
+    //    can never inject an impossible pattern) --
+    const [geometry, setGeometry] = useState(() =>
+        sanitizeGeometry(loadJSON(STORAGE_KEYS.geometry, DEFAULT_GEOMETRY))
+    );
+    const [height, setHeightRaw] = useState(() =>
+        sanitizeHeight(loadJSON(STORAGE_KEYS.height, DEFAULT_HEIGHT))
+    );
+    const [shrinkage, setShrinkage] = useState(() => loadJSON(STORAGE_KEYS.shrinkage, false) === true);
+    const [material, setMaterial] = useState(() => {
+        const saved = loadJSON(STORAGE_KEYS.material, DEFAULT_MATERIAL);
+        return MATERIALS[saved] ? saved : DEFAULT_MATERIAL;
     });
+    const [showTaper, setShowTaper] = useState(false);
 
-    // Casting Properties
-    const [height, setHeight] = useState(() => {
-        const saved = localStorage.getItem('midas_pattern_height');
-        return saved ? parseFloat(saved) : 1.0;
-    });
+    // Single funnel for every geometry mutation.
+    const updateGeometry = useCallback((next) => {
+        setGeometry((prev) => sanitizeGeometry(typeof next === 'function' ? next(prev) : next));
+    }, []);
 
-    const [shrinkage, setShrinkage] = useState(() => {
-        const saved = localStorage.getItem('midas_pattern_shrinkage');
-        return saved === 'true';
-    });
+    const setHeight = useCallback((value) => setHeightRaw(sanitizeHeight(value)), []);
 
-    // New: Draft Angle Visibility
-    const [showDraft, setShowDraft] = useState(false);
+    useEffect(() => { saveJSON(STORAGE_KEYS.geometry, geometry); }, [geometry]);
+    useEffect(() => { saveJSON(STORAGE_KEYS.height, height); }, [height]);
+    useEffect(() => { saveJSON(STORAGE_KEYS.shrinkage, shrinkage); }, [shrinkage]);
+    useEffect(() => { saveJSON(STORAGE_KEYS.material, material); }, [material]);
 
-    // -- Persistence Effects --
+    const { points, renderPoints, handles, path } = usePatternGeometry(geometry);
+    const shrinkFactor = shrinkageFactor(material, shrinkage);
+
+    const fitToView = useCallback(() => {
+        const view = computeFitView(geometry, shrinkFactor, dimensions);
+        setZoom(view.zoom);
+        setPan(view.pan);
+    }, [geometry, shrinkFactor, dimensions]);
+
     useEffect(() => {
-        localStorage.setItem('midas_pattern_geometry', JSON.stringify(geometry));
-    }, [geometry]);
-
-    useEffect(() => {
-        localStorage.setItem('midas_pattern_height', height.toString());
-    }, [height]);
-
-    useEffect(() => {
-        localStorage.setItem('midas_pattern_shrinkage', shrinkage.toString());
-    }, [shrinkage]);
-
-    // Calculate Points Hook
-    const { points, renderPoints, path } = usePatternGeometry(geometry);
-
-    // Handle window resize
-    useEffect(() => {
-        const handleResize = () => {
-            setDimensions({ width: window.innerWidth, height: window.innerHeight });
-        };
+        const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    // -- Interaction Logic --
+    // -- Pointer interaction (covers mouse, pen and touch) --
 
-    const handleMouseDown = (e) => {
-        // Middle mouse button or Space key held start Pan
-        if (e.button === 1 || e.shiftKey) {
+    const handlePointerDown = (e) => {
+        if (e.button === 1 || e.shiftKey || e.pointerType === 'touch') {
             setIsPanning(true);
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
+            lastPointerPos.current = { x: e.clientX, y: e.clientY };
+            e.currentTarget.setPointerCapture?.(e.pointerId);
             e.preventDefault();
         }
     };
 
-    const onHandleDragStart = (type) => {
+    const onHandleDragStart = (type, e) => {
         setActiveDragHandle(type);
+        svgRef.current?.setPointerCapture?.(e.pointerId);
     };
 
-    const handleMouseMove = (e) => {
-        // Handle Panning
+    const handlePointerMove = (e) => {
         if (isPanning) {
-            const dx = e.clientX - lastMousePos.current.x;
-            const dy = e.clientY - lastMousePos.current.y;
-
-            setPan(prev => ({
-                x: prev.x + dx,
-                y: prev.y + dy
+            setPan((prev) => ({
+                x: prev.x + (e.clientX - lastPointerPos.current.x),
+                y: prev.y + (e.clientY - lastPointerPos.current.y),
             }));
-
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
+            lastPointerPos.current = { x: e.clientX, y: e.clientY };
             return;
         }
 
-        // Handle Radius Resizing
-        if (activeDragHandle) {
-            const screenCenterX = dimensions.width / 2 + pan.x;
-            const screenCenterY = dimensions.height / 2 + pan.y;
+        if (!activeDragHandle) return;
 
-            const deltaX = (e.clientX - screenCenterX) / zoom;
-            const deltaY = (e.clientY - screenCenterY) / zoom;
+        const rect = svgRef.current?.getBoundingClientRect();
+        const originX = (rect?.left ?? 0) + dimensions.width / 2 + pan.x;
+        const originY = (rect?.top ?? 0) + dimensions.height / 2 + pan.y;
 
-            // Euclidean distance in screen pixels
-            const radiusPixels = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        // Screen delta -> canvas pixels -> inches -> undo the shrink scale,
+        // so the handle tracks the cursor whatever the view is doing.
+        const dx = (e.clientX - originX) / zoom;
+        const dy = (e.clientY - originY) / zoom;
 
-            // Convert to Inches
-            let newRadiusInches = pixelsToInches(radiusPixels);
+        const toInches = (px) => pixelsToInches(px) / shrinkFactor;
 
-            // Validation
-            newRadiusInches = validateConstraints('DIAMETER', newRadiusInches * 2) / 2;
-
-            setGeometry(prev => ({
-                ...prev,
-                [activeDragHandle === 'outer' ? 'outerRadius' : 'innerRadius']: parseFloat(newRadiusInches.toFixed(3))
-            }));
+        if (activeDragHandle === 'corner') {
+            const w = Math.abs(toInches(dx)) * 2;
+            const l = Math.abs(toInches(dy)) * 2;
+            updateGeometry((prev) => ({ ...prev, width: w, length: l }));
+            return;
         }
+
+        const radiusInches = toInches(Math.sqrt(dx * dx + dy * dy));
+        const key = activeDragHandle === 'outer' ? 'outerRadius' : 'innerRadius';
+        updateGeometry((prev) => ({ ...prev, [key]: radiusInches }));
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
         setIsPanning(false);
         setActiveDragHandle(null);
     };
 
-    // Zoom with wheel
     const handleWheel = (e) => {
-        if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            const zoomSensitivity = 0.001;
-            const newZoom = Math.max(0.1, Math.min(5, zoom - e.deltaY * zoomSensitivity));
-            setZoom(newZoom);
-        }
+        const sensitivity = e.ctrlKey || e.metaKey ? 0.003 : 0.001;
+        setZoom((z) => Math.max(0.1, Math.min(5, z - e.deltaY * sensitivity)));
     };
+
+    const cursor = isPanning ? 'grabbing' : activeDragHandle ? 'crosshair' : 'default';
 
     return (
         <div className="relative w-full h-full overflow-hidden bg-slate-900 select-none">
-            {/* Pass geometry state and setter to Sidebar */}
             <Sidebar
                 geometryValues={geometry}
-                onGeometryChange={setGeometry}
+                onGeometryChange={updateGeometry}
                 height={height}
                 setHeight={setHeight}
                 shrinkage={shrinkage}
                 setShrinkage={setShrinkage}
+                material={material}
+                setMaterial={setMaterial}
+                shrinkFactor={shrinkFactor}
                 points={points}
             />
 
-            {/* Draft Toggle Overlay */}
-            <div className="absolute top-4 right-4 z-10">
+            <div className="app-chrome absolute top-4 right-4 z-10 flex gap-2">
                 <button
-                    onClick={() => setShowDraft(!showDraft)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono transition-all ${showDraft
-                        ? "bg-amber-900/40 border-amber-600 text-amber-400"
-                        : "bg-slate-800/80 border-slate-600 text-slate-400 hover:text-slate-200"
-                        }`}
+                    type="button"
+                    onClick={fitToView}
+                    title="Frame the pattern in view"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono transition-all bg-slate-800/80 border-slate-600 text-slate-400 hover:text-slate-200"
                 >
-                    <span>{showDraft ? '👁' : 'Ø'}</span>
-                    <span>Draft Preview</span>
+                    <span aria-hidden="true">⤢</span>
+                    <span>Fit</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setShowTaper((v) => !v)}
+                    title="Visual taper preview only - not a calculated draft angle"
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono transition-all ${
+                        showTaper
+                            ? 'bg-amber-900/40 border-amber-600 text-amber-400'
+                            : 'bg-slate-800/80 border-slate-600 text-slate-400 hover:text-slate-200'
+                    }`}
+                >
+                    <span aria-hidden="true">{showTaper ? '◎' : '○'}</span>
+                    <span>Taper Preview</span>
                 </button>
             </div>
 
-            {/* Main Visual Canvas */}
             <svg
-                className={`w-full h-full cursor-${isPanning ? 'grabbing' : activeDragHandle ? 'crosshair' : 'default'}`}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
+                ref={svgRef}
+                className="w-full h-full app-canvas"
+                style={{ cursor, touchAction: 'none' }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onPointerLeave={handlePointerUp}
                 onWheel={handleWheel}
             >
-                {/* Background Grid */}
-                <GridBackground
-                    width={dimensions.width}
-                    height={dimensions.height}
-                    scale={zoom}
-                    pan={pan}
-                />
+                <GridBackground width={dimensions.width} height={dimensions.height} scale={zoom} pan={pan} />
 
-                {/* Workspace Content Group */}
-                {/* Transform origin is center screen + pan */}
-                <g
-                    transform={`translate(${dimensions.width / 2 + pan.x}, ${dimensions.height / 2 + pan.y}) scale(${zoom})`}
-                >
-                    {/* Center Marker */}
-                    <circle cx="0" cy="0" r="5" fill="#f59e0b" opacity="0.5" />
+                <g transform={`translate(${dimensions.width / 2 + pan.x}, ${dimensions.height / 2 + pan.y}) scale(${zoom})`}>
+                    <circle cx="0" cy="0" r="4" fill="#f59e0b" opacity="0.6" />
 
-                    {/* Casting Pattern Layer */}
-                    {/* If Shrinkage is ON, we scale the VISUALS by 1.015, but the underlying data (and stats) remain based on the desired dimensions */}
-                    <g transform={shrinkage ? "scale(1.015)" : "scale(1)"} className="transition-transform duration-300">
+                    {/* Shrink allowance is shown at true scale; the same factor
+                        goes into the export, so screen and file agree. */}
+                    <g transform={`scale(${shrinkFactor})`}>
                         <ShapeRenderer
                             points={renderPoints}
                             path={path}
-                            holeDiameter={geometry.holeDiameter}
-                            onHandleMouseDown={onHandleDragStart}
-                            showDraft={showDraft}
+                            handles={handles}
+                            onHandlePointerDown={onHandleDragStart}
+                            showTaper={showTaper}
                         />
                     </g>
-
                 </g>
 
-                {/* Helper Text */}
-                <text x="340" y="30" fill="#94a3b8" fontFamily="monospace" fontSize="12">
-                    Zoom: {zoom.toFixed(2)}x | Pan: {Math.round(pan.x)}, {Math.round(pan.y)} | Drag points to resize
+                <text x="340" y="30" fill="#94a3b8" fontFamily="monospace" fontSize="12" className="app-chrome">
+                    Zoom {zoom.toFixed(2)}x · Pan {Math.round(pan.x)},{Math.round(pan.y)} · shift-drag to pan · wheel to zoom · 1 grid square = 1 inch
                 </text>
             </svg>
+
+            {/* Hidden on screen, shown at true 1:1 when printing. */}
+            <PrintSheet
+                points={points}
+                geometry={geometry}
+                shrinkFactor={shrinkFactor}
+            />
         </div>
     );
 };
