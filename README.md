@@ -130,6 +130,13 @@ Pages happens only on a push to `main`.
 The Vite `base` is `'./'` (relative), so the build works from a user page, a
 project page or a custom domain without reconfiguration.
 
+## Verification ledger
+
+Every claim about this tool is graded in [`docs/GATE_LEDGER.md`](docs/GATE_LEDGER.md)
+as either **VERIFIED** (executed, with the evidence shown) or **DEFERRED** (not
+run here, with the exact reproduction command). There is no third state, and
+nothing is a green check for an unrun claim.
+
 ## Known limitations
 
 - **Taper Preview is a flat 10% visual inset, not a calculated draft angle.**

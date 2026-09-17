@@ -66,15 +66,62 @@ export const sanitizeGeometry = (input = {}) => {
     g.width = snapToFraction(clamp(g.width, LIMITS.width.min, LIMITS.width.max, DEFAULT_GEOMETRY.width));
     g.length = snapToFraction(clamp(g.length, LIMITS.length.min, LIMITS.length.max, DEFAULT_GEOMETRY.length));
 
+    // The desired values are what the operator last asked for. They are bounded
+    // only by the absolute limits, never by the current shape - so a dimension
+    // that today's geometry cannot accommodate is suppressed, not destroyed.
+    g.desiredInnerRadius = snapToFraction(
+        clamp(
+            g.desiredInnerRadius ?? g.innerRadius,
+            LIMITS.innerRadius.min,
+            LIMITS.innerRadius.max,
+            LIMITS.innerRadius.min
+        )
+    );
+    g.desiredHoleDiameter = snapToFraction(
+        clamp(g.desiredHoleDiameter ?? g.holeDiameter, 0, LIMITS.outerRadius.max * 2, 0)
+    );
+
     // A star may never invert: the valley stays below the tip by minWebGap.
     const innerCeiling = Math.max(LIMITS.innerRadius.min, g.outerRadius - LIMITS.minWebGap);
     g.innerRadius = snapToFraction(
-        clamp(g.innerRadius, LIMITS.innerRadius.min, innerCeiling, LIMITS.innerRadius.min)
+        clamp(g.desiredInnerRadius, LIMITS.innerRadius.min, innerCeiling, LIMITS.innerRadius.min)
     );
 
-    g.holeDiameter = snapToFraction(clamp(g.holeDiameter, 0, maxHoleDiameter(g), 0));
+    g.holeDiameter = snapToFraction(clamp(g.desiredHoleDiameter, 0, maxHoleDiameter(g), 0));
 
     return g;
+};
+
+/** Geometry keys whose requested value is remembered separately from the enforced one. */
+const DESIRE_KEYS = {
+    innerRadius: 'desiredInnerRadius',
+    holeDiameter: 'desiredHoleDiameter',
+};
+
+/**
+ * Applies a change as an operator REQUEST, then sanitises.
+ *
+ * A value that differs from the current enforced value is an explicit request,
+ * so it updates the remembered desire. A value passed through unchanged (the
+ * usual case when some other dimension is being edited) leaves the desire
+ * alone, which is what lets a suppressed dimension come back when room returns.
+ *
+ * Without this, sweeping the outer radius down crushed the inner radius and
+ * zeroed the centre hole, and sweeping it back up did not restore either -
+ * a silent, irreversible loss of the operator's work.
+ *
+ * `next` may be a full geometry object or a sparse patch.
+ */
+export const requestGeometry = (previous = {}, next = {}) => {
+    const merged = { ...previous, ...next };
+
+    for (const [key, desireKey] of Object.entries(DESIRE_KEYS)) {
+        if (next[key] !== undefined && next[key] !== previous[key]) {
+            merged[desireKey] = next[key];
+        }
+    }
+
+    return sanitizeGeometry(merged);
 };
 
 /** Height is held outside the geometry object but obeys the same discipline. */

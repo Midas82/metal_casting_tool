@@ -6,7 +6,7 @@ import Sidebar from '../../layout/Sidebar';
 import usePatternGeometry from '../../hooks/usePatternGeometry';
 import { computeFitView } from '../../logic/viewFit';
 import { dragToGeometryPatch } from '../../logic/dragMath';
-import { sanitizeGeometry, sanitizeHeight, DEFAULT_GEOMETRY, DEFAULT_HEIGHT } from '../../logic/constraints';
+import { sanitizeGeometry, requestGeometry, sanitizeHeight, DEFAULT_GEOMETRY, DEFAULT_HEIGHT } from '../../logic/constraints';
 import { shrinkageFactor, DEFAULT_MATERIAL, MATERIALS } from '../../utils/castingFormulas';
 import { loadJSON, saveJSON, STORAGE_KEYS } from '../../utils/storage';
 
@@ -52,9 +52,11 @@ const PatternWorkspace = () => {
     const [material, setMaterial] = useState(initial.material);
     const [showTaper, setShowTaper] = useState(false);
 
-    // Single funnel for every geometry mutation.
+    // Single funnel for every geometry mutation. Routed through requestGeometry
+    // so a dimension the current shape cannot fit is suppressed rather than
+    // discarded, and returns when there is room for it again.
     const updateGeometry = useCallback((next) => {
-        setGeometry((prev) => sanitizeGeometry(typeof next === 'function' ? next(prev) : next));
+        setGeometry((prev) => requestGeometry(prev, typeof next === 'function' ? next(prev) : next));
     }, []);
 
     const setHeight = useCallback((value) => setHeightRaw(sanitizeHeight(value)), []);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeGeometry, sanitizeHeight, maxHoleDiameter, LIMITS, DEFAULT_GEOMETRY } from './constraints';
+import { sanitizeGeometry, requestGeometry, sanitizeHeight, maxHoleDiameter, LIMITS, DEFAULT_GEOMETRY } from './constraints';
 
 describe('sanitizeGeometry', () => {
     it('clamps an oversized diameter typed into the text field', () => {
@@ -60,5 +60,67 @@ describe('sanitizeHeight', () => {
         expect(sanitizeHeight(100)).toBe(LIMITS.height.max);
         expect(sanitizeHeight(0)).toBe(LIMITS.height.min);
         expect(sanitizeHeight('tall')).toBeGreaterThan(0);
+    });
+});
+
+describe('requestGeometry — non-destructive clamping', () => {
+    const star = () => sanitizeGeometry({
+        ...DEFAULT_GEOMETRY, shapeType: 'STAR', outerRadius: 6, innerRadius: 3.5, holeDiameter: 2,
+    });
+
+    it('restores the inner radius when the outer radius makes room again', () => {
+        // Regression: sanitize clamped but never restored, so sweeping the
+        // outer radius down and back silently destroyed the operator's work.
+        let g = star();
+        expect(g.innerRadius).toBe(3.5);
+
+        g = requestGeometry(g, { ...g, outerRadius: 0.5 });
+        expect(g.innerRadius).toBeLessThanOrEqual(0.5 - LIMITS.minWebGap);
+
+        g = requestGeometry(g, { ...g, outerRadius: 6 });
+        expect(g.innerRadius).toBe(3.5); // came back
+    });
+
+    it('restores the centre hole when the shape can carry it again', () => {
+        let g = star();
+        expect(g.holeDiameter).toBe(2);
+
+        g = requestGeometry(g, { ...g, outerRadius: 0.5 });
+        expect(g.holeDiameter).toBe(0); // suppressed - no metal left round it
+
+        g = requestGeometry(g, { ...g, outerRadius: 6 });
+        expect(g.holeDiameter).toBe(2); // restored
+    });
+
+    it('treats an explicit change as a new request, replacing the old desire', () => {
+        let g = star();
+        g = requestGeometry(g, { ...g, innerRadius: 1.5 });
+        expect(g.desiredInnerRadius).toBe(1.5);
+
+        // Shrinking and regrowing must now return to 1.5, not the original 3.5.
+        g = requestGeometry(g, { ...g, outerRadius: 0.5 });
+        g = requestGeometry(g, { ...g, outerRadius: 6 });
+        expect(g.innerRadius).toBe(1.5);
+    });
+
+    it('never lets the enforced value violate a constraint', () => {
+        let g = star();
+        g = requestGeometry(g, { ...g, outerRadius: 1 });
+        expect(g.innerRadius).toBeLessThanOrEqual(1 - LIMITS.minWebGap);
+        expect(g.holeDiameter).toBeLessThanOrEqual(maxHoleDiameter(g));
+    });
+
+    it('accepts a sparse patch as well as a full object', () => {
+        const g = requestGeometry(star(), { innerRadius: 2 });
+        expect(g.innerRadius).toBe(2);
+        expect(g.desiredInnerRadius).toBe(2);
+        expect(g.outerRadius).toBe(6); // untouched keys survive
+    });
+
+    it('is idempotent and survives geometry with no desires recorded', () => {
+        const legacy = { shapeType: 'STAR', outerRadius: 6, innerRadius: 3, holeDiameter: 1 };
+        const once = requestGeometry({}, legacy);
+        expect(once.desiredInnerRadius).toBe(3);
+        expect(requestGeometry(once, once)).toEqual(once);
     });
 });
