@@ -87,10 +87,12 @@ dimensional belongs there, not in a component.
 
 ## Deployment
 
-CI runs lint, tests and build on every push and pull request to `main`, and
-deploys to GitHub Pages only on push to `main`. The Vite `base` is `'./'`
-(relative), so the build works from a user page, a project page or a custom
-domain without reconfiguration.
+CI runs lint, tests and build on **every branch push** and pull request, so a
+feature branch is verified before it ever reaches review. Deployment to GitHub
+Pages happens only on a push to `main`.
+
+The Vite `base` is `'./'` (relative), so the build works from a user page, a
+project page or a custom domain without reconfiguration.
 
 ## Known limitations
 

@@ -1,18 +1,25 @@
-name: Deploy to GitHub Pages
+name: CI and Deploy
 
+# Checks run on every branch push, so a feature branch is verified before it
+# ever reaches a pull request. Deployment stays restricted to main below.
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 
+# Least privilege by default; the deploy job elevates for itself.
 permissions:
   contents: read
-  pages: write
-  id-token: write
+
+# A new push supersedes an in-flight run for the same ref. Deployments are
+# never cancelled mid-flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
+    name: Lint, test, build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,7 +50,12 @@ jobs:
           path: dist
 
   deploy:
+    name: Deploy to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
